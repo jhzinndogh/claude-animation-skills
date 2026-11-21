@@ -1,0 +1,8 @@
+node_modules
+*.mp4
+audio/
+stills/
+log*.txt
+parts.txt
+render_all.log
+__pycache__/
