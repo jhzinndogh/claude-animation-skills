@@ -11,3 +11,8 @@ __pycache__/
 skills/stick-figure/engine/template/seg/
 skills/stick-figure/engine/template/stills/
 skills/stick-figure/engine/template/silent.mp4
+
+# rendered videos (too big for git)
+/*.mp4
+examples/*/parts/
+examples/*/silent.mp4
