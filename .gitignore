@@ -11,3 +11,10 @@ __pycache__/
 skills/stick-figure/engine/template/seg/
 skills/stick-figure/engine/template/stills/
 skills/stick-figure/engine/template/silent.mp4
+# reel build outputs (rebuilt by each reel's build script)
+reels/*/seg/
+reels/*/stills/
+reels/*/silent.mp4
+reels/*/*.mp4
+reels/*/build.log
+reels/*/audio/*.wav
