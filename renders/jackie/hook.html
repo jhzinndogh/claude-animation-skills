@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:'Inter';font-weight:700;src:url(fonts/inter-700-normal.woff2) format('woff2')}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;background:#141020}
+#root{position:relative;width:1080px;height:1920px;overflow:hidden;background:#141020;font-family:'Inter',sans-serif}
+#c{position:absolute;left:0;top:0;width:1080px;height:1920px;display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse 75% 60% at 50% 45%,rgba(0,0,0,0) 55%,rgba(30,18,8,.55) 100%);visibility:hidden}
+#flash{position:absolute;inset:0;background:#fff;opacity:0}
+.cap{position:absolute;left:60px;width:960px;top:1272px;text-align:center;font:700 50px/1.1 'Inter';color:#fff21a;letter-spacing:.05em;
+  visibility:hidden;white-space:nowrap;
+  text-shadow:-3px -3px 0 #000,3px -3px 0 #000,-3px 3px 0 #000,3px 3px 0 #000,0 -3px 0 #000,0 3px 0 #000,-3px 0 0 #000,3px 0 0 #000,0 4px 0 #000}
+</style>
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js","three/addons/":"./vendor/three/addons/"}}</script>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="__DURATION__" data-fps="30" data-width="1080" data-height="1920">
+<canvas id="c" width="360" height="640"></canvas>
+<div id="vig"></div>
+<div id="flash"></div>
+<div class="cap" id="cap"></div>
+<script type="module">
+import * as THREE from "three";
+
+// Low-poly (PS1) hook for a Jackie Chan short, three shots:
+//   A  maternity ward, sepia like an old photo: the baby, a "$26" tag, parents with heads bowed, a doctor holding out coins
+//   B  night city: he runs, leaps the gap between two roofs in slow motion, crashes through boxes, gets up holding his back
+//   C  same roof, under a spotlight: he raises a gold statuette and grins
+// Internal render 360x640, shown 3x with nearest-neighbour upscaling; vertex snapping + 15-bit dither in every material.
+const SPEC = __SPEC__;
+const RW = 360, RH = 640, DUR = Number(document.getElementById('root').dataset.duration);
+const CUT_B = SPEC.cutB, CUT_C = SPEC.cutC;           // shot changes (seconds)
+const B0 = CUT_B;                                      // shot B timeline is relative to its start
+let seed = 1954;
+const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const lerp = (a, b, k) => a + (b - a) * k;
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: false });
+renderer.setPixelRatio(1); renderer.setSize(RW, RH, false);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 10, 30);
+scene.background = new THREE.Color(0x000000);
+const camera = new THREE.PerspectiveCamera(52, RW / RH, 0.05, 120);
+
+// ------------------------------------------------------------ PS1 shader patch
+const SNX = (RW / 2).toFixed(1), SNY = (RH / 2).toFixed(1);
+function ps1(m) {
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      if (gl_Position.w > 0.0) { vec2 sn = vec2(${SNX}, ${SNY});
+        gl_Position.xy = floor(gl_Position.xy / gl_Position.w * sn + 0.5) / sn * gl_Position.w; }`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      { const float BY[16] = float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
+        ivec2 q = ivec2(mod(gl_FragCoord.xy, 4.0));
+        float th = (BY[q.x + q.y * 4] + 0.5) / 16.0 - 0.5;
+        gl_FragColor.rgb = clamp(floor(gl_FragColor.rgb * 31.0 + th + 0.5) / 31.0, 0.0, 1.0); }`);
+  };
+  m.customProgramCacheKey = () => 'ps1';
+  return m;
+}
+const lam = (o) => ps1(new THREE.MeshLambertMaterial(Object.assign({ flatShading: true }, o)));
+const basic = (o) => ps1(new THREE.MeshBasicMaterial(o));
+
+// ------------------------------------------------------------ pixel textures
+function tex(w, h, draw) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d'); g.imageSmoothingEnabled = false; draw(g, w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const rgbOf = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
+const col = (h, k = 1) => { const [r, g, b] = rgbOf(h); return `rgb(${clamp(r * k, 0, 255) | 0},${clamp(g * k, 0, 255) | 0},${clamp(b * k, 0, 255) | 0})`; };
+const px = (g, x, y, c, w = 1, h = 1) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+const noise = (g, x0, y0, w, h, base, j) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) px(g, x, y, col(base, 1 + (rnd() * 2 - 1) * j)); };
+function uvs(geo, sx, sy) { const a = geo.attributes.uv; for (let i = 0; i < a.count; i++) a.setXY(i, a.getX(i) * sx, a.getY(i) * sy); return geo; }
+
+const GL = {
+  '$': ['..#..', '.####', '#.#..', '.###.', '..#.#', '####.', '..#..'],
+  '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'], '1': ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+  '2': ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'], '3': ['####.', '....#', '....#', '.###.', '....#', '....#', '####.'],
+  '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'], '5': ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+  '6': ['.###.', '#....', '#....', '####.', '#...#', '#...#', '.###.'], '7': ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+  '8': ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'], '9': ['.###.', '#...#', '#...#', '.####', '....#', '....#', '.###.'],
+};
+function bitText(g, str, x, y, s, c) { for (const ch of str) { const gl = GL[ch]; if (gl) gl.forEach((row, j) => { for (let i = 0; i < 5; i++) if (row[i] === '#') px(g, x + i * s, y + j * s, c, s, s); }); x += 6 * s; } }
+
+const T = {};
+// --- faces (16x16, top row = forehead under the fringe)
+function face(skin, draw) { return tex(16, 16, (g) => { noise(g, 0, 0, 16, 16, skin, .025); draw(g); }); }
+const D = col(0x1a1210), SH = (k) => col(0xc68658, k);
+T.jackie = face(0xe0a676, (g) => {
+  px(g, 0, 0, D, 16, 2);                                                     // hairline
+  px(g, 2, 5, D, 5, 1); px(g, 9, 5, D, 5, 1); px(g, 3, 4, D, 3, 1); px(g, 10, 4, D, 3, 1);   // thick brows
+  px(g, 4, 7, D, 3, 1); px(g, 9, 7, D, 3, 1); px(g, 4, 8, col(0xf4ead8), 1, 1); px(g, 11, 8, col(0xf4ead8), 1, 1);
+  px(g, 7, 8, SH(1), 2, 2); px(g, 6, 10, SH(1), 4, 1); px(g, 5, 11, SH(.95), 6, 1); px(g, 6, 11, col(0x5a3020)); px(g, 9, 11, col(0x5a3020));  // broad nose
+  px(g, 4, 12, col(0x5a2018)); px(g, 11, 12, col(0x5a2018));                 // grin corners
+  px(g, 5, 13, col(0x5a2018)); px(g, 10, 13, col(0x5a2018)); px(g, 6, 13, col(0xfbf6ea), 4, 1); px(g, 6, 14, col(0x6a2020), 4, 1);
+  px(g, 2, 10, SH(1.05), 1, 3); px(g, 13, 10, SH(1.05), 1, 3);
+});
+T.jackieOuch = face(0xe0a676, (g) => {
+  px(g, 0, 0, D, 16, 2);
+  px(g, 2, 4, D, 2, 1); px(g, 4, 5, D, 3, 1); px(g, 12, 4, D, 2, 1); px(g, 9, 5, D, 3, 1);   // brows pinched
+  px(g, 4, 7, D, 1, 1); px(g, 5, 8, D, 2, 1); px(g, 11, 7, D, 1, 1); px(g, 9, 8, D, 2, 1);    // eyes squeezed > <
+  px(g, 7, 9, SH(1), 2, 1); px(g, 6, 10, SH(1), 4, 1); px(g, 5, 11, SH(.95), 6, 1); px(g, 6, 11, col(0x5a3020)); px(g, 9, 11, col(0x5a3020));
+  px(g, 4, 13, col(0x5a2018), 8, 1); px(g, 5, 13, col(0xfbf6ea), 6, 1); px(g, 4, 14, col(0x5a2018), 8, 1);              // gritted teeth
+});
+T.baby = face(0xf3c6a2, (g) => {
+  px(g, 4, 8, D, 3, 1); px(g, 9, 8, D, 3, 1);                                // sleeping eyes
+  px(g, 3, 10, col(0xf09a8a), 2, 2); px(g, 11, 10, col(0xf09a8a), 2, 2);
+  px(g, 7, 10, col(0xd99a78), 2, 1); px(g, 7, 12, col(0x9a4a40), 2, 1);
+});
+T.mom = face(0xdca27a, (g) => {
+  px(g, 0, 0, D, 16, 3); px(g, 0, 3, D, 3, 3); px(g, 13, 3, D, 3, 3);
+  px(g, 4, 6, D, 3, 1); px(g, 9, 6, D, 3, 1); px(g, 4, 8, D, 3, 1); px(g, 9, 8, D, 3, 1);
+  px(g, 7, 10, SH(1), 2, 1); px(g, 6, 13, col(0x7a3a30), 4, 1); px(g, 5, 14, col(0x7a3a30)); px(g, 10, 14, col(0x7a3a30));
+});
+T.dad = face(0xd49a70, (g) => {
+  px(g, 0, 0, D, 16, 2);
+  px(g, 3, 5, D, 4, 1); px(g, 9, 5, D, 4, 1); px(g, 4, 8, D, 3, 1); px(g, 9, 8, D, 3, 1);
+  px(g, 7, 9, SH(1), 2, 2); px(g, 6, 11, SH(1), 4, 1); px(g, 5, 13, col(0x6a3028), 6, 1); px(g, 4, 14, col(0x6a3028)); px(g, 11, 14, col(0x6a3028));
+});
+T.doctor = face(0xf0c8a8, (g) => {
+  px(g, 0, 0, col(0x9a9a98), 16, 3);
+  px(g, 3, 5, col(0x6a6a68), 4, 1); px(g, 9, 5, col(0x6a6a68), 4, 1);
+  px(g, 2, 7, col(0x2a2a2a), 5, 3); px(g, 9, 7, col(0x2a2a2a), 5, 3); px(g, 3, 8, col(0xcfe0e6), 3, 1); px(g, 10, 8, col(0xcfe0e6), 3, 1); px(g, 7, 8, col(0x2a2a2a), 2, 1);
+  px(g, 7, 10, col(0xd8a080), 2, 2); px(g, 5, 13, col(0x8a4a40), 6, 1);
+});
+// --- maternity ward
+T.lino = tex(16, 16, (g) => { noise(g, 0, 0, 16, 16, 0xe6e0cc, .03); noise(g, 0, 0, 8, 8, 0x9fbfa6, .03); noise(g, 8, 8, 8, 8, 0x9fbfa6, .03); });
+T.tile = tex(16, 16, (g) => { noise(g, 0, 0, 16, 16, 0xa8c8b0, .03); for (let i = 0; i < 16; i++) { px(g, i, 0, col(0x7e9c86)); px(g, 0, i, col(0x7e9c86)); px(g, i, 8, col(0x7e9c86)); px(g, 8, i, col(0x7e9c86)); } });
+T.plaster = tex(32, 32, (g) => { noise(g, 0, 0, 32, 32, 0xe8dcc0, .04); for (let k = 0; k < 24; k++) px(g, rnd() * 32 | 0, rnd() * 32 | 0, col(0xd2c4a6)); });
+T.night = tex(16, 24, (g) => {
+  for (let y = 0; y < 24; y++) px(g, 0, y, col([0x101a3a, 0x16224a, 0x1c2c58, 0x243866][clamp(y / 6 | 0, 0, 3)]), 16, 1);
+  for (let k = 0; k < 10; k++) px(g, rnd() * 16 | 0, rnd() * 16 | 0, col(0xdfe6ff));
+  px(g, 10, 3, col(0xfff4cc), 3, 3); px(g, 9, 4, col(0xfff4cc), 1, 1); px(g, 12, 3, col(0x16224a), 1, 1);
+  for (let x = 0; x < 16; x++) { const h = 2 + ((x * 7) % 5); px(g, x, 24 - h, col(0x0a0e1c), 1, h); if (x % 3 === 0) px(g, x, 24 - h + 1, col(0xffd27a)); }
+});
+T.tag = tex(32, 16, (g) => {
+  noise(g, 0, 0, 32, 16, 0xf3ead2, .03); for (let i = 0; i < 32; i++) { px(g, i, 0, col(0x8a6a4a)); px(g, i, 15, col(0x8a6a4a)); }
+  for (let j = 0; j < 16; j++) { px(g, 0, j, col(0x8a6a4a)); px(g, 31, j, col(0x8a6a4a)); }
+  px(g, 3, 7, col(0x5a4030), 2, 2);                                          // string hole
+  bitText(g, '$26', 9, 4, 1, col(0x9a1e14)); bitText(g, '$26', 10, 4, 1, col(0x9a1e14));
+});
+T.blanket = tex(16, 16, (g) => { noise(g, 0, 0, 16, 16, 0xf6f0e2, .04); for (let y = 2; y < 16; y += 5) px(g, 0, y, col(0xa8c4e0), 16, 1); });
+// --- night city
+T.tar = tex(32, 32, (g) => { noise(g, 0, 0, 32, 32, 0x55525e, .09); for (let k = 0; k < 40; k++) px(g, rnd() * 32 | 0, rnd() * 32 | 0, col(0x3e3c46)); for (let i = 0; i < 32; i++) px(g, i, 0, col(0x46444e)); });
+function facade(base, litK) {
+  const lit = [];
+  for (let j = 0; j < 8; j++) for (let i = 0; i < 4; i++) { const r = rnd(); lit.push(r < litK ? (r < litK * 0.3 ? 0x9fd0ff : 0xffd27a) : 0); }
+  const draw = (emit) => (g) => {
+    if (emit) px(g, 0, 0, '#000', 32, 64); else noise(g, 0, 0, 32, 64, base, .05);
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 4; i++) {
+      const c = lit[j * 4 + i], x = 2 + i * 8, y = 2 + j * 8;
+      if (emit) { if (c) px(g, x, y, col(c, 0.95), 4, 5); }
+      else { px(g, x, y, c ? col(c) : col(0x1c2030), 4, 5); px(g, x, y + 5, col(base, 1.25), 4, 1); }
+    }
+  };
+  return [tex(32, 64, draw(false)), tex(32, 64, draw(true))];
+}
+const FAC = [facade(0x3a3848, .35), facade(0x4a3c3c, .3), facade(0x34404a, .4), facade(0x403a52, .28)];
+T.sky = tex(8, 64, (g) => {
+  const st = [0x0c0a1e, 0x120e2c, 0x1a1238, 0x261644, 0x3a1c4e, 0x582454, 0x7a2e56, 0x9a3c58];
+  for (let y = 0; y < 64; y++) px(g, 0, y, col(st[clamp(Math.round(y / 63 * 7 + ((y & 1) ? .3 : -.3)), 0, 7)]), 8, 1);
+});
+T.cardboard = tex(16, 16, (g) => { noise(g, 0, 0, 16, 16, 0xb8875a, .06); px(g, 7, 0, col(0xd8c090), 2, 16); for (let i = 0; i < 16; i++) { px(g, i, 0, col(0x7a5434)); px(g, 0, i, col(0x7a5434)); } });
+T.neonA = tex(16, 8, (g) => { px(g, 0, 0, '#000', 16, 8); for (let i = 1; i < 15; i += 3) px(g, i, 2, col(0xff4fa8), 2, 4); px(g, 0, 0, col(0xff4fa8), 16, 1); px(g, 0, 7, col(0xff4fa8), 16, 1); });
+T.neonB = tex(16, 8, (g) => { px(g, 0, 0, '#000', 16, 8); px(g, 2, 2, col(0x4ff0ff), 5, 4); px(g, 9, 2, col(0x4ff0ff), 5, 1); px(g, 9, 5, col(0x4ff0ff), 5, 1); px(g, 0, 0, col(0x4ff0ff), 1, 8); px(g, 15, 0, col(0x4ff0ff), 1, 8); });
+
+// ------------------------------------------------------------ helpers
+const box = (parent, w, h, d, mat, x, y, z, rx = 0, ry = 0, rz = 0, seg = [1, 1, 1]) => {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d, ...seg), mat);
+  m.position.set(x, y, z); m.rotation.set(rx, ry, rz); parent.add(m); return m;
+};
+const plane = (parent, w, h, mat, x, y, z, rx = 0, ry = 0, sx = 1, sy = 1, segX = 1, segY = 1) => {
+  const m = new THREE.Mesh(uvs(new THREE.PlaneGeometry(w, h, segX, segY), sx, sy), mat);
+  m.position.set(x, y, z); m.rotation.set(rx, ry, 0); parent.add(m); return m;
+};
+const frustum = (parent, wt, wb, h, dz, mat, x, y, z, rx = 0) => {
+  const geo = new THREE.CylinderGeometry(wt / Math.SQRT2, wb / Math.SQRT2, h, 4, 1); geo.rotateY(Math.PI / 4); geo.scale(1, 1, dz);
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; parent.add(m); return m;
+};
+
+// ------------------------------------------------------------ a blocky person (feet at the origin, facing +z)
+// pose: hy hips height, crx/crz chest lean, hdx/hdy/hdz head, a* = [shoulder x (forward < 0), spread, elbow], l* = [hip x (forward < 0), knee]
+function person(o) {
+  const skin = lam({ color: o.skin }), hair = lam({ color: o.hair ?? 0x14100e });
+  const faceM = lam({ map: o.face });
+  const P = { root: new THREE.Group(), pivot: new THREE.Group(), inner: new THREE.Group(), arms: [], legs: [], faceM };
+  P.root.add(P.pivot); P.pivot.position.y = 0.45; P.pivot.add(P.inner); P.inner.position.y = -0.45;   // pivot for rolls
+  const hips = P.hips = new THREE.Group(); hips.position.y = 0.95; P.inner.add(hips);
+  box(hips, 0.34, 0.18, 0.21, o.pants, 0, 0, 0);
+  const chest = P.chest = new THREE.Group(); chest.position.y = 0.06; hips.add(chest);
+  frustum(chest, 0.46, 0.34, 0.54, 0.5, o.shirt, 0, 0.27, 0);
+  if (o.tee) { const b = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.5), o.tee); b.position.set(0, 0.27, 0.102); b.rotation.x = -Math.atan(0.06 / 0.54); chest.add(b); }
+  if (o.coat) { box(hips, 0.4, 0.42, 0.24, o.shirt, 0, -0.2, 0); }
+  box(chest, 0.1, 0.1, 0.1, skin, 0, 0.58, 0);
+  const head = P.head = new THREE.Group(); head.position.set(0, 0.62, 0); chest.add(head);
+  box(head, 0.24, 0.28, 0.25, [skin, skin, skin, skin, faceM, hair], 0, 0.14, 0);
+  (o.hairStyle || (() => {}))(head, hair);
+  for (const s of [-1, 1]) {                                               // arms[0] = his right (-x), arms[1] = left
+    const sh = new THREE.Group(); sh.position.set(s * 0.27, 0.5, 0); chest.add(sh);
+    box(sh, 0.11, 0.3, 0.11, o.sleeve || o.shirt, 0, -0.14, 0);
+    const el = new THREE.Group(); el.position.y = -0.29; sh.add(el);
+    box(el, 0.1, 0.27, 0.1, o.fore || o.sleeve || o.shirt, 0, -0.13, 0);
+    box(el, 0.09, 0.1, 0.09, skin, 0, -0.31, 0);
+    P.arms.push({ sh, el, s });
+  }
+  for (const s of [-1, 1]) {
+    const hp = new THREE.Group(); hp.position.set(s * 0.095, -0.05, 0); hips.add(hp);
+    box(hp, 0.14, 0.43, 0.15, o.pants, 0, -0.21, 0);
+    const kn = new THREE.Group(); kn.position.y = -0.43; hp.add(kn);
+    box(kn, 0.12, 0.42, 0.13, o.pants, 0, -0.2, 0);
+    box(kn, 0.13, 0.07, 0.24, o.shoes, 0, -0.43, 0.04);
+    P.legs.push({ hp, kn });
+  }
+  return P;
+}
+function pose(P, q) {
+  P.hips.position.y = q.hy; P.chest.rotation.set(q.crx || 0, q.cry || 0, q.crz || 0); P.head.rotation.set(q.hdx || 0, q.hdy || 0, q.hdz || 0);
+  [q.aR, q.aL].forEach((a, i) => { const A = P.arms[i]; A.sh.rotation.set(a[0], 0, A.s * a[1]); A.el.rotation.x = a[2]; });
+  [q.lR, q.lL].forEach((l, i) => { P.legs[i].hp.rotation.x = l[0]; P.legs[i].kn.rotation.x = l[1]; });
+}
+const mix = (a, b, k) => { if (typeof a === 'number') return lerp(a, b ?? a, k); if (Array.isArray(a)) return a.map((v, i) => lerp(v, b[i], k)); const o = {}; for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) o[key] = mix(a[key] ?? b[key], b[key] ?? a[key], k); return o; };
+const STAND = { hy: 0.95, crx: 0, hdx: 0, aR: [0.05, 0.1, -0.15], aL: [0.05, 0.1, -0.15], lR: [0, 0], lL: [0, 0] };
+const run = (ph) => ({ hy: 0.92 + 0.04 * Math.abs(Math.sin(ph)), crx: 0.3, hdx: -0.25,
+  aR: [0.95 * Math.sin(ph), 0.12, -1.5], aL: [-0.95 * Math.sin(ph), 0.12, -1.5],
+  lR: [-0.95 * Math.sin(ph), 0.35 + 0.7 * (0.5 + 0.5 * Math.cos(ph))], lL: [0.95 * Math.sin(ph), 0.35 + 0.7 * (0.5 - 0.5 * Math.cos(ph))] });
+const LEAP = { hy: 0.95, crx: 0.35, hdx: -0.3, aR: [-2.5, 0.55, -0.25], aL: [-2.1, 0.75, -0.3], lR: [-1.25, 0.35], lL: [0.75, 1.35] };
+const TUCK = { hy: 0.72, crx: 0.95, hdx: 0.45, aR: [-1.0, 0.2, -1.3], aL: [-1.0, 0.2, -1.3], lR: [-1.95, 2.3], lL: [-1.95, 2.3] };
+const CROUCH = { hy: 0.55, crx: 0.6, hdx: -0.2, aR: [-0.7, 0.35, -0.6], aL: [-0.4, 0.5, -0.4], lR: [-1.5, 2.2], lL: [-0.9, 1.7] };
+const OUCH = { hy: 0.93, crx: -0.14, crz: 0.07, hdx: -0.12, hdz: 0.16, aR: [0.75, 0.3, -1.9], aL: [-0.35, 0.3, -1.3], lR: [0.06, 0.06], lL: [-0.12, 0.12] };
+const TRIUMPH = { hy: 0.95, crx: -0.06, crz: 0.04, hdx: -0.1, hdz: -0.05, aR: [-2.95, 0.18, -0.12], aL: [0.15, 0.32, -0.45], lR: [0.02, 0.02], lL: [-0.08, 0.08] };
+
+// hair styles
+const mop = (h, m) => { box(h, 0.28, 0.1, 0.29, m, 0, 0.3, -0.01); box(h, 0.27, 0.07, 0.05, m, 0, 0.255, 0.125); box(h, 0.04, 0.17, 0.26, m, -0.135, 0.2, -0.01); box(h, 0.04, 0.17, 0.26, m, 0.135, 0.2, -0.01); box(h, 0.27, 0.22, 0.05, m, 0, 0.17, -0.135); };
+const bun = (h, m) => { box(h, 0.26, 0.07, 0.27, m, 0, 0.3, -0.01); box(h, 0.26, 0.22, 0.05, m, 0, 0.18, -0.13); box(h, 0.13, 0.12, 0.1, m, 0, 0.24, -0.2); };
+const long = (h, m) => { box(h, 0.27, 0.07, 0.28, m, 0, 0.3, -0.01); box(h, 0.28, 0.44, 0.06, m, 0, 0.08, -0.14); box(h, 0.045, 0.36, 0.22, m, -0.14, 0.13, -0.03); box(h, 0.045, 0.36, 0.22, m, 0.14, 0.13, -0.03); box(h, 0.26, 0.05, 0.05, m, 0, 0.265, 0.125); };
+const short = (h, m) => { box(h, 0.26, 0.06, 0.27, m, 0, 0.3, -0.01); box(h, 0.26, 0.16, 0.05, m, 0, 0.2, -0.13); };
+
+// ============================================================ SHOT A: maternity ward
+const A = new THREE.Group(); scene.add(A);
+const MA = {
+  lino: lam({ map: T.lino }), tile: lam({ map: T.tile }), plaster: lam({ map: T.plaster }), night: basic({ map: T.night }), frame: lam({ color: 0x6a5a48 }),
+  iron: lam({ color: 0xe8e6de }), mattress: lam({ color: 0xeeeadc }), blanket: lam({ map: T.blanket }), tag: lam({ map: T.tag, side: THREE.DoubleSide }),
+  string: lam({ color: 0x7a6a5a }), shade: lam({ color: 0x3a4a3c, side: THREE.DoubleSide }), bulb: basic({ color: 0xfff0c0 }), gold: lam({ color: 0xe8b830, emissive: 0x3a2a00 }),
+  table: lam({ color: 0x8a6a4a }), chartM: lam({ color: 0xf2eee2 }),
+};
+plane(A, 10, 10, MA.lino, 0, 0, 0, -Math.PI / 2, 0, 10 / 0.8, 10 / 0.8, 10, 10);
+plane(A, 10, 1.2, MA.tile, 0, 0.6, -2.2, 0, 0, 10 / 0.6, 2, 10, 1);
+plane(A, 10, 2.2, MA.plaster, 0, 2.3, -2.2, 0, 0, 10 / 1.6, 2.2 / 1.6, 10, 2);
+plane(A, 6, 1.2, MA.tile, -2.6, 0.6, 0.6, 0, Math.PI / 2, 6 / 0.6, 2, 6, 1);
+plane(A, 6, 2.2, MA.plaster, -2.6, 2.3, 0.6, 0, Math.PI / 2, 6 / 1.6, 2.2 / 1.6, 6, 2);
+box(A, 10, 0.06, 0.05, MA.frame, 0, 1.2, -2.18);
+{ // window with the night outside
+  const x = -1.25, y = 1.95;
+  plane(A, 1.0, 1.3, MA.night, x, y, -2.19);
+  box(A, 1.12, 0.07, 0.07, MA.frame, x, y + 0.68, -2.16); box(A, 1.12, 0.07, 0.07, MA.frame, x, y - 0.68, -2.16);
+  box(A, 0.07, 1.4, 0.07, MA.frame, x - 0.53, y, -2.16); box(A, 0.07, 1.4, 0.07, MA.frame, x + 0.53, y, -2.16); box(A, 0.04, 1.3, 0.04, MA.frame, x, y, -2.16);
+}
+// the crib (long side along x, front at +z)
+const CRIB = new THREE.Group(); A.add(CRIB);
+{
+  const W = 1.0, Dp = 0.56;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(CRIB, 0.05, 0.98, 0.05, MA.iron, sx * W / 2, 0.49, sz * Dp / 2);
+  box(CRIB, W, 0.1, Dp, MA.mattress, 0, 0.6, 0);
+  for (const sz of [-1, 1]) { box(CRIB, W, 0.04, 0.04, MA.iron, 0, 0.96, sz * Dp / 2); box(CRIB, W, 0.04, 0.04, MA.iron, 0, 0.56, sz * Dp / 2); for (let i = 1; i < 9; i++) box(CRIB, 0.022, 0.4, 0.022, MA.iron, -W / 2 + i * W / 9, 0.76, sz * Dp / 2); }
+  for (const sx of [-1, 1]) { box(CRIB, 0.04, 0.04, Dp, MA.iron, sx * W / 2, 0.96, 0); for (let i = 1; i < 5; i++) box(CRIB, 0.022, 0.4, 0.022, MA.iron, sx * W / 2, 0.76, -Dp / 2 + i * Dp / 5); }
+}
+// the baby, swaddled, head to the left
+const baby = new THREE.Group(); baby.position.set(0.02, 0.7, 0.02); CRIB.add(baby);
+{
+  const g = new THREE.CylinderGeometry(0.13, 0.11, 0.46, 6); g.rotateZ(Math.PI / 2);
+  const m = new THREE.Mesh(g, MA.blanket); m.position.set(0.06, 0.03, 0); baby.add(m);
+  const skinB = lam({ color: 0xf3c6a2 });
+  const hd = box(baby, 0.17, 0.15, 0.16, [skinB, skinB, skinB, skinB, lam({ map: T.baby }), skinB], -0.24, 0.05, 0, -0.0);
+  hd.rotation.set(-Math.PI / 2 + 0.55, 0, 0);
+  box(baby, 0.06, 0.18, 0.18, MA.blanket, -0.33, 0.06, 0);                 // hood
+  baby.userData.hd = hd;
+}
+// the "$26" tag hanging on the front rail
+const tag = new THREE.Group(); tag.position.set(0.18, 0.94, 0.3); CRIB.add(tag);
+box(tag, 0.008, 0.1, 0.008, MA.string, 0, -0.05, 0);
+const tagCard = plane(tag, 0.26, 0.13, MA.tag, 0, -0.16, 0.005);
+// lamp over the crib
+box(A, 0.02, 0.7, 0.02, MA.string, 0, 2.85, 0);
+{ const sh = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.2, 6, 1, true), MA.shade); sh.position.set(0, 2.45, 0); A.add(sh);
+  const b = new THREE.Mesh(new THREE.IcosahedronGeometry(0.08, 0), MA.bulb); b.position.set(0, 2.36, 0); A.add(b); }
+// a side table with a chart
+box(A, 0.5, 0.6, 0.4, MA.table, -1.35, 0.3, -1.6); box(A, 0.3, 0.02, 0.22, MA.chartM, -1.3, 0.61, -1.58, 0, 0.2);
+// parents behind the crib, heads bowed; doctor on the right holding out coins
+const mom = person({ skin: 0xdca27a, face: T.mom, shirt: lam({ color: 0x9a6a68 }), pants: lam({ color: 0x4a3a3e }), shoes: lam({ color: 0x2a2220 }), hairStyle: long, coat: true });
+mom.root.position.set(-0.62, 0, -0.72); mom.root.rotation.y = 0.25; mom.root.scale.setScalar(0.93); A.add(mom.root);
+const dad = person({ skin: 0xd49a70, face: T.dad, shirt: lam({ color: 0x6e6a58 }), pants: lam({ color: 0x3a3a42 }), shoes: lam({ color: 0x2a2220 }), hairStyle: short });
+dad.root.position.set(0.22, 0, -0.85); dad.root.rotation.y = -0.2; A.add(dad.root);
+const coatM = lam({ color: 0xf2f2ee });
+const doc = person({ skin: 0xf0c8a8, face: T.doctor, hair: 0x9a9a98, shirt: coatM, coat: true, pants: lam({ color: 0x4a4a50 }), shoes: lam({ color: 0x2a2220 }), hairStyle: short });
+doc.root.position.set(0.86, 0, -0.18); doc.root.rotation.y = -Math.PI / 2 + 0.45; A.add(doc.root);
+const coins = new THREE.Group(); doc.arms[0].el.add(coins); coins.position.set(0, -0.37, 0.05);
+for (let i = 0; i < 3; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.012, 7), MA.gold); c.position.set(i * 0.012 - 0.01, i * 0.014, (i % 2) * 0.01); c.rotation.x = Math.PI / 2; coins.add(c); }
+const lampA = new THREE.PointLight(0xffd8a0, 5, 0, 2); lampA.position.set(0, 2.25, 0); A.add(lampA);
+
+// ============================================================ SHOT B/C: night city, two roofs and a gap
+const B = new THREE.Group(); B.position.set(200, 0, 0); scene.add(B);
+const MB = {
+  tar: lam({ map: T.tar }), sky: basic({ map: T.sky, fog: false }), parapet: lam({ color: 0x6a6670 }), metal: lam({ color: 0x7a7c84 }), dark: lam({ color: 0x2a2a30 }),
+  tank: lam({ color: 0x6a4a3a }), card: lam({ map: T.cardboard }), neonA: basic({ map: T.neonA }), neonB: basic({ map: T.neonB }), moon: basic({ color: 0xfff2d0, fog: false }),
+  red: basic({ color: 0xff3030 }),
+};
+const facM = FAC.map(([m, e]) => lam({ map: m, emissiveMap: e, emissive: 0xffffff }));
+function building(x0, x1, z0, z1, top, k, roof = true) {
+  const w = x1 - x0, d = z1 - z0, h = top + 40;
+  const geo = new THREE.BoxGeometry(w, h, d, Math.max(1, w / 2 | 0), Math.max(1, h / 4 | 0), Math.max(1, d / 2 | 0));
+  const uv = geo.attributes.uv, nrm = geo.attributes.normal;
+  for (let i = 0; i < uv.count; i++) { const along = Math.abs(nrm.getX(i)) > 0.5 ? d : w; uv.setXY(i, uv.getX(i) * along / 2.4, uv.getY(i) * h / 4.8); }
+  const m = new THREE.Mesh(geo, facM[k % facM.length]); m.position.set((x0 + x1) / 2, top - h / 2, (z0 + z1) / 2); B.add(m);
+  if (roof) plane(B, w, d, MB.tar, (x0 + x1) / 2, top + 0.002, (z0 + z1) / 2, -Math.PI / 2, 0, w / 2, d / 2, Math.max(1, w / 2 | 0), Math.max(1, d / 2 | 0));
+  return m;
+}
+const ROOF1 = 0, ROOF2 = -2.6, GAP0 = -2.4, GAP1 = 0;
+building(GAP1, 10, -5, 2.2, ROOF1, 0);
+building(-16, GAP0, -5, 2.2, ROOF2, 1);
+// parapets along the back edges, low wall along the front edge of roof 2
+box(B, 10, 0.4, 0.25, MB.parapet, 5, ROOF1 + 0.2, -4.9, 0, 0, 0, [5, 1, 1]);
+box(B, 13.6, 0.4, 0.25, MB.parapet, -9.2, ROOF2 + 0.2, -4.9, 0, 0, 0, [6, 1, 1]);
+// roof 1 props: water tank, AC units, antenna, a warm work lamp
+{
+  const tk = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 1.6, 8), MB.tank); tk.position.set(6.2, 1.55, -3.1); B.add(tk);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.95, 0.5, 8), MB.dark); cap.position.set(6.2, 2.6, -3.1); B.add(cap);
+  for (const [dx, dz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) box(B, 0.08, 0.75, 0.08, MB.metal, 6.2 + dx, 0.375, -3.1 + dz);
+  box(B, 0.9, 0.6, 0.6, MB.metal, 3.2, 0.3, -3.6); box(B, 0.9, 0.6, 0.6, MB.metal, 4.3, 0.3, -3.6);
+  box(B, 0.04, 2.6, 0.04, MB.metal, 2.0, 1.3, -4.4); box(B, 0.6, 0.03, 0.03, MB.metal, 2.0, 2.3, -4.4); box(B, 0.4, 0.03, 0.03, MB.metal, 2.0, 2.0, -4.4);
+  box(B, 0.06, 0.06, 0.06, MB.red, 2.0, 2.62, -4.4);
+}
+// roof 2 props: AC units, a door hut
+box(B, 0.9, 0.6, 0.6, MB.metal, -9.0, ROOF2 + 0.3, -3.8); box(B, 2.0, 2.3, 1.6, facM[2], -12.2, ROOF2 + 1.15, -3.6);
+// the pile of cardboard boxes he crashes through
+const BOXES = [];
+{
+  const spots = [[-5.25, 0.0, 0.55, 0.42], [-5.25, 0.42, 0.62, 0.36], [-5.7, 0.0, 0.3, 0.46], [-5.68, 0.46, 0.4, 0.34], [-6.15, 0.0, 0.7, 0.4], [-5.2, 0.78, 0.5, 0.3], [-6.05, 0.4, 0.62, 0.32]];
+  for (const [x, y, z, s] of spots) {
+    const m = box(B, s, s * 0.85, s * 1.05, MB.card, x, ROOF2 + y + s * 0.425, z, 0, rnd() * 0.4 - 0.2, 0);
+    BOXES.push({ m, p0: m.position.clone(), r0: m.rotation.clone(), half: s * 0.425,
+      v: new THREE.Vector3(-1.2 - rnd() * 2.2, 1.6 + rnd() * 2.2, (rnd() - 0.35) * 2.2), w: new THREE.Vector3((rnd() - .5) * 9, (rnd() - .5) * 7, (rnd() - .5) * 9) });
+  }
+}
+// skyline behind
+{
+  for (let i = 0; i < 46; i++) {
+    const z = -12 - rnd() * 34, x = -40 + rnd() * 68, w = 3 + rnd() * 5, d = 3 + rnd() * 4, top = -6 + rnd() * 24 + (z < -30 ? 8 : 0);
+    building(x - w / 2, x + w / 2, z - d / 2, z + d / 2, top, i, false);
+    if (rnd() < 0.35) { const nm = rnd() < 0.5 ? MB.neonA : MB.neonB; plane(B, 2.0, 1.0, nm, x, top - 1.5 - rnd() * 3, z + d / 2 + 0.05); }
+  }
+  // near side buildings framing the gap, below the roofs
+  building(-3.0, -2.4, -5, 2.2, ROOF2 - 0.01, 3, false);
+}
+const sky = plane(B, 260, 90, MB.sky, 0, 18, -70, 0, 0, 1, 1);
+const moon = new THREE.Mesh(new THREE.CircleGeometry(2.2, 10), MB.moon); moon.position.set(-14, 22, -66); B.add(moon);
+{ const sm = basic({ color: 0xe0e6ff, fog: false }); for (let i = 0; i < 60; i++) { const s = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.18), sm); s.position.set(-90 + rnd() * 180, 14 + rnd() * 40, -68); B.add(s); } }
+// lights for the city
+const moonL = new THREE.DirectionalLight(0xb0bcff, 1.0); moonL.position.set(-4, 8, 7); moonL.target.position.set(0, 0, 0); B.add(moonL); B.add(moonL.target);
+const neonL = new THREE.PointLight(0xff4fa8, 5, 9, 1.6); neonL.position.set(-10.5, ROOF2 + 3, -2.5); B.add(neonL);
+const workL = new THREE.PointLight(0xffc070, 7, 8, 1.6); workL.position.set(2.2, 1.9, 1.6); B.add(workL);
+
+// Jackie
+const navy = lam({ color: 0x2c3e6e }), whiteTee = lam({ color: 0xf2f0ea });
+const J = person({ skin: 0xe0a676, face: T.jackie, shirt: navy, sleeve: navy, tee: whiteTee, pants: lam({ color: 0x3a3a44 }), shoes: lam({ color: 0xeeeeea }), hairStyle: mop });
+B.add(J.root);
+// the gold statuette (generic award figure), held overhead in shot C
+const trophy = new THREE.Group(); J.arms[0].el.add(trophy); trophy.position.set(0, -0.36, 0); trophy.rotation.x = Math.PI; trophy.scale.setScalar(1.6);
+{
+  const gold = lam({ color: 0xf2c230, emissive: 0x5a3a00 }), blk = lam({ color: 0x1a1a1a });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.08, 8), blk); base.position.y = 0.04; trophy.add(base);
+  frustum(trophy, 0.06, 0.04, 0.2, 1, gold, 0, 0.18, 0);
+  frustum(trophy, 0.07, 0.06, 0.1, 1, gold, 0, 0.32, 0);
+  const hd = new THREE.Mesh(new THREE.IcosahedronGeometry(0.04, 0), gold); hd.position.y = 0.41; trophy.add(hd);
+}
+const sparkM = basic({ color: 0xffc830 });
+const sparks = [];
+for (let i = 0; i < 16; i++) { const s = new THREE.Mesh(new THREE.PlaneGeometry(0.045, 0.045), sparkM); B.add(s); sparks.push({ s, a: rnd() * 6.28, r: 0.18 + rnd() * 0.35, y: rnd() * 0.6, sp: 0.6 + rnd() * 1.2 }); }
+const beam = new THREE.Mesh(new THREE.ConeGeometry(1.3, 6, 10, 1, true), basic({ color: 0xfff0c0, transparent: true, opacity: 0.13, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+B.add(beam);
+const spotL = new THREE.SpotLight(0xfff0d0, 30, 12, 0.45, 0.5, 1.2); B.add(spotL); B.add(spotL.target);
+// dust puff at the landing
+const dustM = basic({ color: 0xb0a8b8, transparent: true, depthWrite: false });
+const dust = []; for (let i = 0; i < 14; i++) { const d = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.14), dustM); B.add(d); dust.push({ d, a: rnd() * 6.28, sp: 0.6 + rnd() * 1.4 }); }
+
+// ------------------------------------------------------------ global lights (retinted per shot)
+const hemi = new THREE.HemisphereLight(0xffe6c0, 0x4a3a2c, 1.4); scene.add(hemi);
+
+// ------------------------------------------------------------ shot B choreography (times relative to B0)
+const RUN0 = 0.0, JUMP = 0.95, LAND = 2.6, ROLL1 = 3.25, X_RUN0 = 4.6, X_LAND = -4.6, X_ROLL = -6.3, ARC = 2.2, Z_J = 0.75;
+const slow = (u) => u + 0.75 / (2 * Math.PI) * Math.sin(2 * Math.PI * u);          // fast-slow-fast: slow motion at the top of the leap
+function jackieB(tb) {
+  J.faceM.map = T.jackie; trophy.visible = false;
+  J.root.rotation.set(0, -Math.PI / 2, 0); J.pivot.rotation.set(0, 0, 0);
+  let x, y, q;
+  if (tb < JUMP) {
+    const u = clamp((tb - RUN0) / (JUMP - RUN0), 0, 1);
+    x = lerp(X_RUN0, 0.05, u); y = ROOF1;
+    q = mix(run(2 * Math.PI * 2.7 * tb), LEAP, smooth(JUMP - 0.12, JUMP, tb));
+  } else if (tb < LAND) {
+    const s = slow((tb - JUMP) / (LAND - JUMP));
+    x = lerp(0.05, X_LAND, s); y = lerp(ROOF1, ROOF2, s) + ARC * 4 * s * (1 - s);
+    q = mix(LEAP, TUCK, smooth(0.55, 0.92, s));
+    J.pivot.rotation.x = 0.5 * smooth(0.5, 1, s);
+  } else if (tb < ROLL1) {
+    const u = (tb - LAND) / (ROLL1 - LAND);
+    x = lerp(X_LAND, X_ROLL, 1 - (1 - u) * (1 - u)); y = ROOF2;
+    q = mix(TUCK, CROUCH, smooth(0.8, 1, u));
+    J.pivot.rotation.x = lerp(0.5, 2 * Math.PI, smooth(0, 1, u));
+    J.faceM.map = T.jackieOuch;
+  } else {
+    x = X_ROLL; y = ROOF2;
+    const u = tb - ROLL1;
+    q = mix(CROUCH, OUCH, smooth(0.0, 0.55, u));
+    q.hdy = 0.6 * smooth(0.3, 0.7, u);                                       // turns to the camera, wincing
+    J.root.rotation.y = lerp(-Math.PI / 2, -0.6, smooth(0.2, 0.8, u));
+    J.faceM.map = T.jackieOuch;
+  }
+  J.root.position.set(x, y, Z_J);
+  pose(J, q);
+  return { x, y };
+}
+
+// ------------------------------------------------------------ captions
+const capEl = document.getElementById('cap'), vig = document.getElementById('vig'), flash = document.getElementById('flash'), cv = document.getElementById('c');
+function caption(t) {
+  const c = SPEC.captions.find(([a, b]) => t >= a && t < b);
+  capEl.style.visibility = c ? 'visible' : 'hidden';
+  if (c && capEl.textContent !== c[2]) capEl.textContent = c[2];
+}
+
+// ------------------------------------------------------------ render
+const cp = new THREE.Vector3(), ct = new THREE.Vector3(), V = (x, y, z) => new THREE.Vector3(x, y, z);
+const tmp = new THREE.Vector3();
+function renderAt(t) {
+  const shot = t < CUT_B ? 'A' : t < CUT_C ? 'B' : 'C';
+  A.visible = shot === 'A'; B.visible = shot !== 'A';
+  let shake = 0;
+
+  if (shot === 'A') {
+    scene.background.set(0x2a231c); scene.fog.color.set(0x2a231c); scene.fog.near = 6; scene.fog.far = 14;
+    hemi.color.set(0xffe6c0); hemi.groundColor.set(0x4a3a2c); hemi.intensity = 1.5;
+    const k = smooth(0, CUT_B, t);
+    cp.lerpVectors(V(1.25, 1.55, 2.9), V(0.42, 1.12, 1.25), k);
+    ct.lerpVectors(V(0.05, 0.82, -0.3), V(0.08, 0.74, 0.18), k);
+    camera.fov = 52;
+    // the baby breathes, the tag sways, parents bow, the doctor holds out coins
+    baby.scale.set(1, 1 + 0.03 * Math.sin(t * 3.2), 1);
+    tag.rotation.set(0.05 * Math.sin(t * 1.7), 0.18 * Math.sin(t * 1.3), 0.08 * Math.sin(t * 2.1));
+    pose(mom, mix(STAND, { hdx: 0.42 + 0.04 * Math.sin(t * 1.1), crx: 0.1, aR: [-0.45, -0.1, -1.3], aL: [-0.5, -0.05, -1.4] }, 1));
+    pose(dad, { hy: 0.95, crx: 0.08, hdx: 0.38 + 0.03 * Math.sin(t * 0.9), hdy: -0.2, aR: [-0.4, -0.05, -1.2], aL: [-0.35, -0.05, -1.25], lR: [0, 0], lL: [0, 0] });
+    const reach = smooth(0.4, 1.6, t);
+    pose(doc, mix(STAND, { hy: 0.95, crx: 0.12, hdx: 0.2, hdy: 0.1, aR: [-0.95, 0.05, -0.75], aL: [0.05, 0.1, -0.2], lR: [-0.1, 0.1], lL: [0.05, 0.05] }, reach));
+    cv.style.filter = 'sepia(0.72) saturate(1.1) contrast(1.06) brightness(0.97)'; vig.style.visibility = 'visible';
+  } else {
+    scene.background.set(0x120e26); scene.fog.color.set(0x1a1232); scene.fog.near = 14; scene.fog.far = 62;
+    hemi.color.set(0x8090d0); hemi.groundColor.set(0x241830); hemi.intensity = 1.1;
+    cv.style.filter = 'none'; vig.style.visibility = 'hidden';
+    const W = (v) => v.add(B.position);
+    if (shot === 'B') {
+      const tb = t - B0;
+      const { x, y } = jackieB(tb);
+      if (tb < JUMP) {                                                        // run: side tracking shot
+        cp.set(x + 0.9, 1.0, 5.4); ct.set(x - 0.9, 0.85, Z_J);
+      } else if (tb < LAND) {                                                 // leap: slow orbit, low angle across the gap
+        const u = (tb - JUMP) / (LAND - JUMP);
+        cp.set(lerp(0.9, -2.6, u), lerp(0.2, -1.3, u), lerp(5.4, 4.4, u)); ct.set(x, y + 0.8, Z_J);
+      } else {                                                                // landing + boxes, then he gets up
+        const u = smooth(0, 1.2, tb - LAND);
+        cp.set(lerp(-3.4, -5.4, u), lerp(-1.6, -1.55, u), lerp(4.3, 3.5, u)); ct.set(lerp(-5.0, -6.2, u), ROOF2 + 0.8, Z_J);
+        shake = 0.09 * (1 - smooth(0, 0.35, tb - LAND - 0.12)) * (tb > LAND + 0.12 ? 1 : 0);
+      }
+      W(cp); W(ct);
+      camera.fov = 52;
+      // boxes scatter when he rolls into them
+      const T_HIT = LAND + 0.15;
+      for (const b of BOXES) {
+        const dt = tb - T_HIT;
+        if (dt <= 0) { b.m.position.copy(b.p0); b.m.rotation.copy(b.r0); continue; }
+        const floor = ROOF2 + b.half;
+        const disc = b.v.y * b.v.y + 2 * 9.8 * (b.p0.y - floor), tl = (b.v.y + Math.sqrt(disc)) / 9.8;
+        const te = dt < tl ? dt : tl + Math.min(dt - tl, 0.3) * 0.4;
+        b.m.position.set(b.p0.x + b.v.x * te, dt < tl ? b.p0.y + b.v.y * dt - 4.9 * dt * dt : floor, b.p0.z + b.v.z * te);
+        const tr = Math.min(dt, tl), settle = smooth(0, 0.12, dt - tl), q = Math.PI / 2;
+        const rx = b.r0.x + b.w.x * tr, ry = b.r0.y + b.w.y * tr, rz = b.r0.z + b.w.z * tr;
+        b.m.rotation.set(lerp(rx, Math.round(rx / q) * q, settle), ry, lerp(rz, Math.round(rz / q) * q, settle));
+      }
+      // dust puff and a white flash on impact
+      const dd = tb - LAND;
+      for (const p of dust) {
+        const on = dd > 0 && dd < 0.9; p.d.visible = on;
+        if (on) { p.d.position.set(X_LAND + Math.cos(p.a) * p.sp * dd, ROOF2 + 0.1 + 0.5 * dd * p.sp * 0.5, Z_J + Math.sin(p.a) * p.sp * dd * 0.6); p.d.lookAt(camera.position); p.d.scale.setScalar(1 + dd * 2); }
+      }
+      dustM.opacity = 0.7 * (1 - smooth(0, 0.9, dd));
+      flash.style.opacity = dd >= 0 && dd < 0.1 ? 0.75 : 0;
+      beam.visible = false; spotL.intensity = 0; for (const s of sparks) s.s.visible = false;
+    } else {                                                                  // C: the statuette under a spotlight
+      const tc = t - CUT_C;
+      J.faceM.map = T.jackie; trophy.visible = true;
+      J.root.position.set(X_ROLL, ROOF2, Z_J); J.root.rotation.set(0, 0.18, 0); J.pivot.rotation.set(0, 0, 0);
+      const up = smooth(0.0, 0.55, tc);
+      const q = mix(mix(STAND, { aR: [-0.6, 0.2, -1.6] }, 1), TRIUMPH, up);
+      q.hy += 0.02 * Math.sin(tc * 3);
+      pose(J, q);
+      const k = smooth(0, DUR - CUT_C, tc);
+      cp.set(lerp(-5.9, -6.15, k), ROOF2 + lerp(1.35, 1.5, k), Z_J + lerp(4.3, 3.5, k)); ct.set(X_ROLL - 0.08, ROOF2 + 1.75, Z_J);
+      W(cp); W(ct);
+      camera.fov = 50;
+      for (const b of BOXES) b.m.visible = b.m.position.distanceTo(tmp.set(X_ROLL, ROOF2, Z_J)) > 0.8;
+      for (const p of dust) p.d.visible = false;
+      flash.style.opacity = tc < 0.06 ? 0.35 : 0;
+      beam.visible = true; beam.position.set(X_ROLL, ROOF2 + 3, Z_J); spotL.intensity = 30 * smooth(0, 0.3, tc);
+      spotL.position.set(X_ROLL + 0.3, ROOF2 + 6, Z_J + 0.6); spotL.target.position.set(X_ROLL, ROOF2 + 1, Z_J);
+      J.root.updateMatrixWorld(true);
+      const tw = trophy.getWorldPosition(new THREE.Vector3()).sub(B.position);
+      for (const s of sparks) {
+        s.s.visible = up > 0.6;
+        const a = s.a + tc * s.sp;
+        s.s.position.set(tw.x + Math.cos(a) * s.r, tw.y + 0.35 + s.y * 0.7 + 0.1 * Math.sin(tc * 4 + s.a), tw.z + Math.sin(a) * s.r);
+        s.s.lookAt(camera.position); s.s.scale.setScalar(0.5 + 0.8 * Math.abs(Math.sin(tc * 5 + s.a * 3)));
+      }
+    }
+  }
+  if (shot !== 'A') for (const b of BOXES) if (shot === 'B') b.m.visible = true;
+  camera.position.copy(cp); camera.lookAt(ct);
+  if (shake) { camera.position.x += shake * Math.sin(t * 97); camera.position.y += shake * Math.cos(t * 83); }
+  camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+  renderer.render(scene, camera);
+  caption(t);
+}
+window.addEventListener('hf-seek', (e) => renderAt(e.detail.time));
+renderAt(window.__hfThreeTime || 0);
+</script>
+</div>
+</body></html>
