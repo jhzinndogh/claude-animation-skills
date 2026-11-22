@@ -1,6 +1,6 @@
 # Align one continuous VO take (audio/vo_new.wav) to the script, word by word.
 # Writes audio/words_new.json and audio/warp.json (old-time -> new-time anchors).
-import json, re, difflib, os, shutil, numpy as np, soundfile as sf, sherpa_onnx, glob, sys
+import json, re, difflib, unicodedata, os, shutil, numpy as np, soundfile as sf, sherpa_onnx, glob, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 KIT = os.path.realpath(os.path.join(ROOT, "..", "..", "..", "kit"))  # the voice models live in kit/models
 src = sys.argv[1] if len(sys.argv) > 1 else 'audio/vo.wav'
@@ -18,7 +18,7 @@ asr = []
 for tok, ts in zip(r.tokens, r.timestamps):
     if tok.startswith(' ') or tok.startswith('▁') or not asr: asr.append([tok.strip(' ▁'), ts])
     else: asr[-1][0] += tok
-norm = lambda w: re.sub(r"[^a-z0-9]", "", w.lower())
+norm = lambda w: re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFD", w.lower()).encode("ascii", "ignore").decode())  # accents folded, so "lámen" matches "lamen"
 lines = json.load(open('script.json'))
 REPL = json.load(open('captions.json')) if os.path.exists('captions.json') else {}
 script = []
