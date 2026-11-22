@@ -11,3 +11,6 @@ __pycache__/
 skills/stick-figure/engine/template/seg/
 skills/stick-figure/engine/template/stills/
 skills/stick-figure/engine/template/silent.mp4
+out/**/work-*/
+out/**/*.lowpoly.mp4
+!out/hachiko.lowpoly.mp4

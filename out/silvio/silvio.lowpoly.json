@@ -1,0 +1,30 @@
+{
+  "lines": ["silvio santos"], "sign": "", "prev": "", "next": "", "snow": false,
+  "hold": 80.2, "template": "silvio.html", "out": "silvio-santos.lowpoly.mp4",
+  "sections": [
+    {"t0": 0, "t1": 8, "chunks": [
+      "como um camelô de 14 anos", "que vendia capinhas de plástico no centro do rio",
+      "construiu um império bilionário", "e se tornou o maior apresentador da história do brasil?",
+      "essa é a vida de silvio santos"]},
+    {"t0": 8, "t1": 28, "chunks": [
+      "nascido em 12 de dezembro de 1930", "na lapa, no rio de janeiro",
+      "seu nome verdadeiro era senor abravanel", "filho de imigrantes", "ele começou a trabalhar cedo",
+      "aos 14 anos virou camelô na avenida rio branco", "vendendo capas para títulos de eleitor e canetas",
+      "a voz dele chamava tanta atenção nas ruas", "que um fiscal o indicou para um teste na rádio",
+      "e ele passou em primeiro lugar"]},
+    {"t0": 28, "t1": 55, "chunks": [
+      "depois de servir como paraquedista no exército", "e trabalhar no rádio",
+      "silvio se mudou para são paulo", "lá, em 1958, assumiu o baú da felicidade",
+      "uma empresa de carnês que estava quase quebrando", "e transformou o negócio numa máquina de dinheiro",
+      "nos anos 60 lançou o programa silvio santos", "que virou febre nos domingos brasileiros",
+      "o auge veio em 1981", "quando ele venceu uma concorrência pública", "e fundou a própria emissora: o sbt"]},
+    {"t0": 55, "t1": 78, "chunks": [
+      "durante décadas, silvio dominou a tv", "com o microfone preso no peito", "aviõezinhos de dinheiro",
+      "e bordões que todo brasileiro conhece", "dono de um império com empresas", "como a jequiti e o próprio sbt",
+      "ele se afastou das câmeras nos últimos anos", "para ficar com a família",
+      "e faleceu em 17 de agosto de 2024", "aos 93 anos, em são paulo", "deixando o país inteiro de luto"]},
+    {"t0": 78, "t1": 85, "chunks": [
+      "de camelô a lenda da comunicação", "silvio santos provou que carisma", "e visão de negócio mudam qualquer destino",
+      "qual foi o momento mais marcante dele na tv pra você?", "comenta aqui embaixo"]}
+  ]
+}
