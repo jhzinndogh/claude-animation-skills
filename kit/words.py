@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 
 import numpy as np
 
@@ -27,7 +28,7 @@ def recognizer():
     d = glob.glob(os.path.join(KIT, 'models', 'sherpa-onnx-nemo-parakeet*'))
     if not d:
         sys.exit(f'the word-timing model is missing: run  bash "{KIT}/setup.sh" --voice')
-    d = d[0]
+    d = sorted(d)[-1]  # the newest model: v3 also covers Portuguese, Spanish, French and more
     return sherpa_onnx.OfflineRecognizer.from_transducer(
         encoder=f'{d}/encoder.int8.onnx', decoder=f'{d}/decoder.int8.onnx', joiner=f'{d}/joiner.int8.onnx',
         tokens=f'{d}/tokens.txt', model_type='nemo_transducer')
@@ -57,7 +58,7 @@ def recognise(a):
 
 def follow_script(heard, script):
     """respell the heard words as the script has them, keeping the heard timings"""
-    norm = lambda w: re.sub(r'[^a-z0-9]', '', w.lower())  # noqa: E731
+    norm = lambda w: re.sub(r'[^a-z0-9]', '', unicodedata.normalize('NFKD', w.lower()).encode('ascii', 'ignore').decode())  # noqa: E731
     sw = script.split()
     sm = difflib.SequenceMatcher(a=[norm(w) for w in sw], b=[norm(w[0]) for w in heard], autojunk=False)
     start = [None] * len(sw)
