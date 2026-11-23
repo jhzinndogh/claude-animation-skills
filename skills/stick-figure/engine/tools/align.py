@@ -4,7 +4,8 @@ import json, re, difflib, os, shutil, numpy as np, soundfile as sf, sherpa_onnx,
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 KIT = os.path.realpath(os.path.join(ROOT, "..", "..", "..", "kit"))  # the voice models live in kit/models
 src = sys.argv[1] if len(sys.argv) > 1 else 'audio/vo.wav'
-d = glob.glob(os.path.join(KIT, "models", "sherpa-onnx-nemo-parakeet*"))
+# parakeet v2 is English only; v3 (25 European languages, Portuguese included) is picked first when present
+d = sorted(glob.glob(os.path.join(KIT, "models", "sherpa-onnx-nemo-parakeet*")), key=lambda p: "v3" not in p)
 if not d: sys.exit(f"the word-timing model is missing: run  bash {KIT}/setup.sh --voice")
 d = d[0]
 rec = sherpa_onnx.OfflineRecognizer.from_transducer(encoder=f"{d}/encoder.int8.onnx", decoder=f"{d}/decoder.int8.onnx",
@@ -18,7 +19,9 @@ asr = []
 for tok, ts in zip(r.tokens, r.timestamps):
     if tok.startswith(' ') or tok.startswith('▁') or not asr: asr.append([tok.strip(' ▁'), ts])
     else: asr[-1][0] += tok
-norm = lambda w: re.sub(r"[^a-z0-9]", "", w.lower())
+import unicodedata
+# accents folded so Portuguese (or any Latin-script) words match the recogniser's spelling
+norm = lambda w: re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", w.lower()).encode("ascii", "ignore").decode())
 lines = json.load(open('script.json'))
 REPL = json.load(open('captions.json')) if os.path.exists('captions.json') else {}
 script = []
@@ -58,6 +61,7 @@ for p in anchors[1:]:
 json.dump({'anchors': clean, 'old_end': old[-1]['e'], 'new_end': dur}, open('audio/warp.json', 'w'))
 print('matched', sum(1 for b in sm.get_matching_blocks() for _ in range(b.size)), 'of', len(script), 'dur', round(dur, 2))
 print(' '.join(f"{w['w']}@{w['s']:.2f}" for w in words[:20]))
+open('audio/asr.txt', 'w').write(' '.join(w for w, _ in asr))  # what the recogniser heard: a quick pronunciation check
 
 open('web/words.js', 'w').write('const WORDS=' + json.dumps(words) + ';')
 open('web/warp.js', 'w').write('window.WARP=' + json.dumps(json.load(open('audio/warp.json'))) + ';')
