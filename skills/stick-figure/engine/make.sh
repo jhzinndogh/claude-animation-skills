@@ -7,6 +7,7 @@
 #   make.sh ~/reels/pirate elevenlabs      # new ElevenLabs take (needs ELEVENLABS_API_KEY)
 #   make.sh ~/reels/pirate ~/take.mp3      # your own recording
 #   AUDIO_ONLY=1 make.sh ~/reels/pirate    # remix the sound only (reuses the last picture)
+#   KOKORO_ARGS="pm_alex 1.1 pt-br" make.sh ~/reels/x kokoro   # Kokoro voice, speed and language
 set -euo pipefail
 ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIT="$(cd "$ENGINE/../../../kit" && pwd)"
@@ -21,8 +22,8 @@ cd "$DIR"; mkdir -p audio
 
 echo "== voice: $VOICE"
 case "$VOICE" in
-  keep)       [ -f audio/vo.wav ] || { [ -f audio/vo_kokoro.wav ] || "$PY" "$ENGINE/tools/tts_kokoro.py"; cp audio/vo_kokoro.wav audio/vo.wav; } ;;
-  kokoro)     "$PY" "$ENGINE/tools/tts_kokoro.py"; cp audio/vo_kokoro.wav audio/vo.wav ;;
+  keep)       [ -f audio/vo.wav ] || { [ -f audio/vo_kokoro.wav ] || "$PY" "$ENGINE/tools/tts_kokoro.py" ${KOKORO_ARGS:-}; cp audio/vo_kokoro.wav audio/vo.wav; } ;;
+  kokoro)     "$PY" "$ENGINE/tools/tts_kokoro.py" ${KOKORO_ARGS:-}; cp audio/vo_kokoro.wav audio/vo.wav ;;
   elevenlabs) "$PY" "$ENGINE/tools/tts_elevenlabs.py" audio/vo_el.mp3
               ffmpeg -v error -y -i audio/vo_el.mp3 -ac 1 -ar 44100 audio/vo.wav ;;
   *)          ffmpeg -v error -y -i "$VOICE" -ac 1 -ar 44100 audio/vo.wav ;;

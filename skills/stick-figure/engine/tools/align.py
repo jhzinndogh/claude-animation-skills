@@ -18,7 +18,8 @@ asr = []
 for tok, ts in zip(r.tokens, r.timestamps):
     if tok.startswith(' ') or tok.startswith('▁') or not asr: asr.append([tok.strip(' ▁'), ts])
     else: asr[-1][0] += tok
-norm = lambda w: re.sub(r"[^a-z0-9]", "", w.lower())
+import unicodedata
+norm = lambda w: re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFD", w.lower()).encode("ascii", "ignore").decode())  # accents folded, so Portuguese/Spanish words match
 lines = json.load(open('script.json'))
 REPL = json.load(open('captions.json')) if os.path.exists('captions.json') else {}
 script = []
