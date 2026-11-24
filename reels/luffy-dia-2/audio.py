@@ -273,6 +273,7 @@ VO = np.zeros(N); VO[:min(N, len(vo))] = vo[:N]
 venv = lp(np.abs(VO), 6); vtrack = np.clip(venv / .05, 0, 1)
 duck = 1 - .55 * vtrack
 mixL = VO * 1.0 + music * .22 * duck + sfx * .7
+if _os.environ.get('SFX_ONLY') == '1': mixL = sfx * .7   # sound effects only: no voice, no music
 mixR = mixL.copy()
 out = np.stack([mixL, mixR], 1)
 fade = np.ones(N); fl = int(.5 * SR); fade[-fl:] = np.linspace(1, 0, fl); out *= fade[:, None]
