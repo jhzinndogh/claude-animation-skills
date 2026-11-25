@@ -1,0 +1,8 @@
+seg/
+stills/
+silent.mp4
+*.mp4
+audio/mix.wav
+f_*.png
+sheet*.jpg
+final_check.jpg
