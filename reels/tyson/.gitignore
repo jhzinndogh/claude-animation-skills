@@ -1,0 +1,6 @@
+*.mp4
+seg/
+stills/
+sheet*.jpg
+chk.jpg
+audio/*.wav
