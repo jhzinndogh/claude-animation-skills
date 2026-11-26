@@ -205,7 +205,9 @@ VO = np.zeros(N); VO[:min(N, len(vo))] = vo[:N]
 # duck music under VO
 venv = lp(np.abs(VO), 6); vtrack = np.clip(venv / .05, 0, 1)
 duck = 1 - .55 * vtrack
-mixL = VO * 1.0 + music * .22 * duck + sfx * .7
+VOG = 0.0 if _os.environ.get("NO_VO") else 1.0
+VO = VO * VOG; duck = 1 - .55 * np.clip(lp(np.abs(VO), 6) / .05, 0, 1)
+mixL = VO + music * .22 * duck + sfx * .7
 mixR = mixL.copy()
 out = np.stack([mixL, mixR], 1)
 fade = np.ones(N); fl = int(.5 * SR); fade[-fl:] = np.linspace(1, 0, fl); out *= fade[:, None]
