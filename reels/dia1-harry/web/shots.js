@@ -199,7 +199,7 @@ shot(B(10), B(11), 'cut', (ctx, lt, t) => {
 shot(B(11), B(14), 'whip', (ctx, lt, t) => {
   const t0 = B(11);
   const cam = { x: 540, y: 900, z: 1.25, r: 0 };
-  ctx.save(); ctx.filter = 'blur(10px) brightness(.55)'; hallBG(ctx, t, cam); applyCam(ctx, cam, .55); candles(ctx, t, 10, 7, 120, 500); ctx.restore();
+  hallBG(ctx, t, cam); applyCam(ctx, cam, .55); candles(ctx, t, 10, 7, 120, 500); darkness(ctx, .5, '#0a0814');
   // small frozen Harry + hat under the cards
   applyCam(ctx, { x: 540, y: 960, z: 1, r: 0 }, 1);
   popText(ctx, 'DIA 2 = ?', 540, 300, 100, inv(0, .3, lt), '#fff', INK);
